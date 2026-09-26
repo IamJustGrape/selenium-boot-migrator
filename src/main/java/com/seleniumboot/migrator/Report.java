@@ -5,10 +5,15 @@ import java.util.Map;
 import java.util.TreeMap;
 
 public record Report(int filesFound, int filesParsed, List<String> unparsable, List<Finding> findings,
-                     List<String> detectedTechnologies) {
+                     List<String> detectedTechnologies, List<String> recognizedTechnologies) {
 
     public Report(int filesFound, int filesParsed, List<String> unparsable, List<Finding> findings) {
-        this(filesFound, filesParsed, unparsable, findings, List.of());
+        this(filesFound, filesParsed, unparsable, findings, List.of(), List.of());
+    }
+
+    public Report(int filesFound, int filesParsed, List<String> unparsable, List<Finding> findings,
+                  List<String> detectedTechnologies) {
+        this(filesFound, filesParsed, unparsable, findings, detectedTechnologies, List.of());
     }
 
     public long count(Finding.Status s) {
@@ -32,6 +37,12 @@ public record Report(int filesFound, int filesParsed, List<String> unparsable, L
             sb.append("  No supported build descriptor found\n");
         } else {
             detectedTechnologies.forEach(technology -> sb.append("  ").append(technology).append('\n'));
+        }
+        sb.append("\nRecognized technologies\n");
+        if (recognizedTechnologies.isEmpty()) {
+            sb.append("  No supported test technologies detected\n");
+        } else {
+            sb.append("  ").append(String.join(", ", recognizedTechnologies)).append('\n');
         }
         Map<String, Long> byRule = new TreeMap<>();
         findings.forEach(f -> byRule.merge(f.ruleId(), 1L, Long::sum));
