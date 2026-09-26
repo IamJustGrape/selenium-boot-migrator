@@ -16,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 
 import static com.seleniumboot.migrator.Finding.Status.AUTO;
@@ -23,6 +24,9 @@ import static com.seleniumboot.migrator.Finding.Status.MANUAL;
 
 /** Read-only static analysis: parses Java sources and reports patterns that map onto Selenium Boot. */
 public final class Analyzer {
+
+    private static final Set<String> DRIVER_LIFECYCLE_ANNOTATIONS = Set.of(
+            "BeforeMethod", "AfterMethod", "BeforeClass", "Before", "After", "BeforeEach", "AfterEach");
 
     private final JavaParser parser = new JavaParser(
             new ParserConfiguration().setLanguageLevel(ParserConfiguration.LanguageLevel.JAVA_17));
@@ -115,6 +119,30 @@ public final class Analyzer {
                 .filter(c -> c.getNameAsString().endsWith("DriverManager") || c.getNameAsString().endsWith("DriverFactory"))
                 .forEach(c -> out.add(new Finding("MIG-015", MANUAL, file, line(c), c.getNameAsString(),
                         "Custom driver lifecycle: review, then replace with BaseTest.")));
+        // MIG-017: driver lifecycle managed in TestNG or JUnit setup/teardown methods
+        cu.findAll(MethodDeclaration.class).stream()
+                .filter(this::isDriverLifecycleMethod)
+                .forEach(method -> out.add(new Finding("MIG-017", AUTO, file, line(method),
+                        "Driver setup/teardown in @" + lifecycleAnnotation(method) + " " + method.getNameAsString() + "()",
+                        "Delete the lifecycle glue; extend BaseTest. Driver creation, per-thread isolation, and teardown are handled for you.")));
+    }
+
+    private boolean isDriverLifecycleMethod(MethodDeclaration method) {
+        if (lifecycleAnnotation(method) == null || method.getBody().isEmpty()) return false;
+        var body = method.getBody().get();
+        boolean createsDriver = body.findAll(ObjectCreationExpr.class).stream()
+                .anyMatch(creation -> creation.getType().getNameAsString().endsWith("Driver"));
+        boolean quitsDriver = body.findAll(MethodCallExpr.class).stream()
+                .anyMatch(call -> call.getNameAsString().equals("quit"));
+        return createsDriver || quitsDriver;
+    }
+
+    private String lifecycleAnnotation(MethodDeclaration method) {
+        return method.getAnnotations().stream()
+                .map(annotation -> annotation.getName().getIdentifier())
+                .filter(DRIVER_LIFECYCLE_ANNOTATIONS::contains)
+                .findFirst()
+                .orElse(null);
     }
 
     private static int line(Node n) {

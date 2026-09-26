@@ -32,6 +32,7 @@ Each rule follows the [Selenium + TestNG migration guide](https://docs.seleniumb
 | MIG-014 | `Thread.sleep` | Manual review |
 | MIG-015 | Custom `*DriverManager` / `*DriverFactory` | Manual review |
 | MIG-016 | `implicitlyWait` | Remove; manual review |
+| MIG-017 | Driver creation or quit in TestNG/JUnit lifecycle methods | Delete lifecycle glue; extend `BaseTest` |
 
 ## Adding a rule
 
