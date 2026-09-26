@@ -15,4 +15,24 @@ class BaseTest {
     void setUpClass() {
         driver = new FirefoxDriver();
     }
+
+    @BeforeTest
+    void setUpTest() {
+        driver = new ChromeDriver();
+    }
+
+    @AfterTest
+    void tearDownTest() {
+        driver.quit();
+    }
+
+    @BeforeSuite
+    void setUpSuite() {
+        driver = new ChromeDriver();
+    }
+
+    @AfterSuite
+    void tearDownSuite() {
+        driver.quit();
+    }
 }

@@ -10,4 +10,9 @@ class BaseTest {
     void tearDown() {
         driver.quit();
     }
+
+    @AfterClass
+    void tearDownClass() {
+        driver.quit();
+    }
 }
