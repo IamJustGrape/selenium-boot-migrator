@@ -16,13 +16,17 @@ java -jar target/selenium-boot-migrator.jar analyze ./my-selenium-project
 java -jar target/selenium-boot-migrator.jar migrate ./my-selenium-project --out ./my-selenium-project-migrated
 ```
 
+
 The output directory must not already exist and cannot be the source directory or one of its
 children. Migration output lists applied changes, compatibility notes, and any findings still
 requiring manual review. The POM rewrite retains the existing Selenium dependency version; confirm
 that it is valid for the Selenium Boot release you intend to use.
 
 `analyze` reports counts per rule, what maps cleanly vs. needs review, and an *estimated* confidence.
-The estimate is a guide, not a guarantee.
+The estimate is a guide, not a guarantee. The report also lists dependencies found in Maven
+`pom.xml` files and Gradle `build.gradle` / `build.gradle.kts` files. Gradle files are inspected
+as text; a Gradle installation is not required.
+
 
 ## Rules
 
@@ -35,9 +39,14 @@ Each rule follows the [Selenium + TestNG migration guide](https://docs.seleniumb
 | MIG-003 | `WebDriverWait`, `ExpectedConditions` | Auto-waiting locators / `getWait()` (manual review) |
 | MIG-004 | `IRetryAnalyzer`, `IAnnotationTransformer` | Delete matching top-level classes; use `retry:` config / `@Retryable` |
 | MIG-005 | Screenshot `ITestListener` | Delete matching top-level listener; captured automatically |
+| MIG-010 | Class with a `WebDriver` constructor parameter | Page-object candidate; review against `BasePage` |
+| MIG-011 | `@FindBy` fields | Manual review; Selenium Boot documents `By` locator fields |
+| MIG-012 | `PageFactory.initElements(...)` | Manual review; page initialization mapping is not documented |
 | MIG-014 | `Thread.sleep` | Manual review |
 | MIG-015 | Custom `*DriverManager` / `*DriverFactory` | Manual review |
 | MIG-016 | `implicitlyWait` | Remove; manual review |
+
+The Selenium Boot [getting-started guide](https://docs.seleniumboot.com/docs/getting-started) documents page objects extending `BasePage`, with a `WebDriver` constructor and `By` locator fields. It does not document `@FindBy` or `PageFactory.initElements`; the analyzer therefore reports their counts for review rather than treating them as a direct `BasePage` mapping.
 
 ## Adding a rule
 
