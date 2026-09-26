@@ -24,7 +24,7 @@ public record Report(int filesFound, int filesParsed, List<String> unparsable, L
         sb.append(String.format("Files parsed:             %d%n", filesParsed));
         Map<String, Long> byRule = new TreeMap<>();
         findings.forEach(f -> byRule.merge(f.ruleId(), 1L, Long::sum));
-        byRule.forEach((r, n) -> sb.append(String.format("%-25s %d%n", r + ":", n)));
+        byRule.forEach((r, n) -> sb.append(String.format("%-40s %d%n", ruleLabel(r) + ":", n)));
         sb.append(String.format("%nMaps cleanly:             %d%n", count(Finding.Status.AUTO)));
         sb.append(String.format("Manual review required:   %d%n", count(Finding.Status.MANUAL)));
         sb.append(String.format("Unparsable files:         %d%n", unparsable.size()));
@@ -37,5 +37,14 @@ public record Report(int filesFound, int filesParsed, List<String> unparsable, L
         }
         unparsable.forEach(u -> sb.append("  [unparsable] ").append(u).append('\n'));
         return sb.toString();
+    }
+
+    private static String ruleLabel(String ruleId) {
+        return switch (ruleId) {
+            case "MIG-010" -> "MIG-010 (Page objects)";
+            case "MIG-011" -> "MIG-011 (@FindBy fields)";
+            case "MIG-012" -> "MIG-012 (PageFactory.initElements calls)";
+            default -> ruleId;
+        };
     }
 }

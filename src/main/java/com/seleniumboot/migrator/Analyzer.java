@@ -4,8 +4,8 @@ import com.github.javaparser.JavaParser;
 import com.github.javaparser.ParserConfiguration;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
+import com.github.javaparser.ast.body.ConstructorDeclaration;
 import com.github.javaparser.ast.body.FieldDeclaration;
-import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
 import com.github.javaparser.ast.expr.ObjectCreationExpr;
@@ -59,6 +59,26 @@ public final class Analyzer {
     }
 
     private void scan(CompilationUnit cu, String file, List<Finding> out) {
+        // MIG-010: page-object candidates with a WebDriver constructor
+        cu.findAll(ClassOrInterfaceDeclaration.class).stream()
+            .filter(c -> !c.isInterface())
+            .filter(c -> c.getConstructors().stream().anyMatch(Analyzer::hasWebDriverParameter))
+            .forEach(c -> out.add(new Finding("MIG-010", MANUAL, file, line(c), c.getNameAsString(),
+                "Review as a page object; Selenium Boot documents extending BasePage.")));
+        // MIG-011: @FindBy fields
+        cu.findAll(FieldDeclaration.class).forEach(fd -> {
+            if (fd.getAnnotations().stream().anyMatch(a -> isAnnotation(a.getNameAsString(), "FindBy"))) {
+            fd.getVariables().forEach(v -> out.add(new Finding("MIG-011", MANUAL, file, line(fd),
+                v.getNameAsString(),
+                "Selenium Boot documents By locator fields, not @FindBy; review before mapping to BasePage.")));
+            }
+        });
+        // MIG-012: PageFactory initialization
+        cu.findAll(MethodCallExpr.class).stream()
+                .filter(m -> m.getNameAsString().equals("initElements"))
+                .filter(m -> m.getScope().map(s -> s.toString().endsWith("PageFactory")).orElse(false))
+                .forEach(m -> out.add(new Finding("MIG-012", MANUAL, file, line(m), "PageFactory.initElements(...)",
+                        "PageFactory is not documented as a Selenium Boot pattern; review page initialization.")));
         // MIG-001: ThreadLocal<WebDriver> driver factory
         cu.findAll(FieldDeclaration.class).forEach(fd -> {
             String type = fd.getElementType().toString();
@@ -119,5 +139,18 @@ public final class Analyzer {
 
     private static int line(Node n) {
         return n.getBegin().map(p -> p.line).orElse(0);
+    }
+
+    private static boolean hasWebDriverParameter(ConstructorDeclaration constructor) {
+        return constructor.getParameters().stream()
+                .anyMatch(p -> isWebDriverType(p.getType().asString()));
+    }
+
+    private static boolean isWebDriverType(String type) {
+        return type.equals("WebDriver") || type.endsWith(".WebDriver");
+    }
+
+    private static boolean isAnnotation(String name, String simpleName) {
+        return name.equals(simpleName) || name.endsWith("." + simpleName);
     }
 }

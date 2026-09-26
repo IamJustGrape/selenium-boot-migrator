@@ -29,9 +29,14 @@ Each rule follows the [Selenium + TestNG migration guide](https://docs.seleniumb
 | MIG-003 | `WebDriverWait`, `ExpectedConditions` | Auto-waiting locators / `getWait()` (manual review) |
 | MIG-004 | `IRetryAnalyzer`, `IAnnotationTransformer` | `retry:` config / `@Retryable` |
 | MIG-005 | Screenshot `ITestListener` | Delete; captured automatically |
+| MIG-010 | Class with a `WebDriver` constructor parameter | Page-object candidate; review against `BasePage` |
+| MIG-011 | `@FindBy` fields | Manual review; Selenium Boot documents `By` locator fields |
+| MIG-012 | `PageFactory.initElements(...)` | Manual review; page initialization mapping is not documented |
 | MIG-014 | `Thread.sleep` | Manual review |
 | MIG-015 | Custom `*DriverManager` / `*DriverFactory` | Manual review |
 | MIG-016 | `implicitlyWait` | Remove; manual review |
+
+The Selenium Boot [getting-started guide](https://docs.seleniumboot.com/docs/getting-started) documents page objects extending `BasePage`, with a `WebDriver` constructor and `By` locator fields. It does not document `@FindBy` or `PageFactory.initElements`; the analyzer therefore reports their counts for review rather than treating them as a direct `BasePage` mapping.
 
 ## Adding a rule
 

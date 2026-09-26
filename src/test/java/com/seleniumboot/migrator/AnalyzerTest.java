@@ -46,6 +46,27 @@ class AnalyzerTest {
     }
 
     @Test
+    void detectsPageObjectsFindByFieldsAndPageFactoryCalls() {
+        var report = new Analyzer().analyzeSource("""
+            import org.openqa.selenium.support.FindBy;
+            class LoginPage {
+                @FindBy(id = "username") private WebElement username;
+                @org.openqa.selenium.support.FindBy(css = ".submit") private WebElement submit;
+                LoginPage(org.openqa.selenium.WebDriver driver) {
+                    org.openqa.selenium.support.PageFactory.initElements(driver, this);
+                }
+            }
+            class NotAPage { NotAPage(String name) {} }
+            """);
+
+        assertEquals(1, report.findings().stream().filter(f -> f.ruleId().equals("MIG-010")).count());
+        assertEquals(2, report.findings().stream().filter(f -> f.ruleId().equals("MIG-011")).count());
+        assertEquals(1, report.findings().stream().filter(f -> f.ruleId().equals("MIG-012")).count());
+        assertTrue(report.render().contains("MIG-010 (Page objects):"));
+        assertTrue(report.render().contains("MIG-011 (@FindBy fields):"));
+    }
+
+    @Test
     void plainClassHasNoFindingsAndFullConfidence() {
         var report = new Analyzer().analyzeSource("class Plain { int x; }");
         assertTrue(report.findings().isEmpty());
