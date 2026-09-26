@@ -4,18 +4,24 @@ Already have Selenium tests? Don't rewrite them. This tool scans an existing Sel
 project and reports which parts map onto [Selenium Boot](https://github.com/seleniumboot/selenium-boot)
 and which need a human.
 
-**Status: early.** `analyze` is read-only and never changes your project. `migrate` is planned
-(see the [milestones](https://github.com/seleniumboot/selenium-boot-migrator/milestones)).
-It runs locally; your source never leaves your machine.
+**Status: early.** `analyze` is read-only. `migrate` creates a separate copy and applies only
+mechanical rules; it never edits the source directory. It runs locally; your source never leaves
+your machine.
 
 ## Use
 
 ```bash
 mvn package
 java -jar target/selenium-boot-migrator.jar analyze ./my-selenium-project
+java -jar target/selenium-boot-migrator.jar migrate ./my-selenium-project --out ./my-selenium-project-migrated
 ```
 
-Output is a count per rule, what maps cleanly vs. needs review, and an *estimated* confidence.
+The output directory must not already exist and cannot be the source directory or one of its
+children. Migration output lists applied changes, compatibility notes, and any findings still
+requiring manual review. The POM rewrite retains the existing Selenium dependency version; confirm
+that it is valid for the Selenium Boot release you intend to use.
+
+`analyze` reports counts per rule, what maps cleanly vs. needs review, and an *estimated* confidence.
 The estimate is a guide, not a guarantee.
 
 ## Rules
@@ -24,11 +30,11 @@ Each rule follows the [Selenium + TestNG migration guide](https://docs.seleniumb
 
 | ID | Detects | Suggested change |
 |---|---|---|
-| MIG-001 | `ThreadLocal<WebDriver>` | Delete the factory; extend `BaseTest` |
-| MIG-002 | `WebDriverManager` | Delete; Selenium Manager handles drivers |
+| MIG-001 | `ThreadLocal<WebDriver>` | Delete a matching top-level `*DriverFactory`; extend `BaseTest` |
+| MIG-002 | `WebDriverManager` | Delete standalone `.setup()` calls; Selenium Manager handles drivers |
 | MIG-003 | `WebDriverWait`, `ExpectedConditions` | Auto-waiting locators / `getWait()` (manual review) |
-| MIG-004 | `IRetryAnalyzer`, `IAnnotationTransformer` | `retry:` config / `@Retryable` |
-| MIG-005 | Screenshot `ITestListener` | Delete; captured automatically |
+| MIG-004 | `IRetryAnalyzer`, `IAnnotationTransformer` | Delete matching top-level classes; use `retry:` config / `@Retryable` |
+| MIG-005 | Screenshot `ITestListener` | Delete matching top-level listener; captured automatically |
 | MIG-014 | `Thread.sleep` | Manual review |
 | MIG-015 | Custom `*DriverManager` / `*DriverFactory` | Manual review |
 | MIG-016 | `implicitlyWait` | Remove; manual review |
