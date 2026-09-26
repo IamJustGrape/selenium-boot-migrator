@@ -44,7 +44,7 @@ public final class Analyzer {
             parsed++;
             scan(result.getResult().get(), root.relativize(f).toString(), findings);
         }
-        return new Report(files.size(), parsed, unparsable, findings);
+        return new Report(files.size(), parsed, unparsable, findings, BuildFileAnalyzer.detect(root));
     }
 
     /** Analyze a single pasted source string. */

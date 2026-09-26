@@ -16,7 +16,9 @@ java -jar target/selenium-boot-migrator.jar analyze ./my-selenium-project
 ```
 
 Output is a count per rule, what maps cleanly vs. needs review, and an *estimated* confidence.
-The estimate is a guide, not a guarantee.
+The estimate is a guide, not a guarantee. The report also lists dependencies found in Maven
+`pom.xml` files and Gradle `build.gradle` / `build.gradle.kts` files. Gradle files are inspected
+as text; a Gradle installation is not required.
 
 ## Rules
 

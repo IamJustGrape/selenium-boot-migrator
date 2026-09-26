@@ -1,12 +1,20 @@
 package com.seleniumboot.migrator;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.net.URISyntaxException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class AnalyzerTest {
+
+    private static Path fixture(String name) throws URISyntaxException {
+        return Path.of(AnalyzerTest.class.getResource("/" + name).toURI());
+    }
 
     private static List<String> rules(String src) {
         return new Analyzer().analyzeSource(src).findings().stream().map(Finding::ruleId).toList();
@@ -77,5 +85,57 @@ class AnalyzerTest {
     void unparsableSourceIsReportedNotThrown() {
         var report = new Analyzer().analyzeSource("class {{{");
         assertEquals(1, report.unparsable().size());
+    }
+
+    @Test
+    void detectsGroovyGradleBuildAndDependencies() throws Exception {
+        String output = new Analyzer().analyze(fixture("gradle-groovy")).render();
+        assertTrue(output.contains("Detected technologies"));
+        assertTrue(output.contains("Build system: Gradle (Groovy DSL)"));
+        assertTrue(output.contains("Dependency: org.seleniumhq.selenium:selenium-java:4.21.0"));
+        assertTrue(output.contains("Dependency: org.testng:testng:7.10.2"));
+    }
+
+    @Test
+    void detectsKotlinGradleBuildAndDependencies() throws Exception {
+        String output = new Analyzer().analyze(fixture("gradle-kotlin")).render();
+        assertTrue(output.contains("Detected technologies"));
+        assertTrue(output.contains("Build system: Gradle (Kotlin DSL)"));
+        assertTrue(output.contains("Dependency: org.seleniumhq.selenium:selenium-java:4.21.0"));
+        assertTrue(output.contains("Dependency: org.junit.jupiter:junit-jupiter:5.10.2"));
+    }
+
+    @Test
+    void reportsMavenDependenciesInTheSameSection() throws Exception {
+        String output = new Analyzer().analyze(fixture("maven")).render();
+        assertTrue(output.contains("Detected technologies"));
+        assertTrue(output.contains("Build system: Maven"));
+        assertTrue(output.contains("Dependency: org.seleniumhq.selenium:selenium-java:4.21.0"));
+    }
+
+    @Test
+    void reportsMalformedMavenBuildAndContinuesAnalysis(@TempDir Path root) throws Exception {
+        Files.writeString(root.resolve("pom.xml"), "<project>");
+        Files.writeString(root.resolve("build.gradle"), "implementation 'org.example:sample:1.0'");
+
+        String output = new Analyzer().analyze(root).render();
+
+        assertTrue(output.contains("Build system: Maven (could not parse pom.xml)"));
+        assertTrue(output.contains("Build system: Gradle (Groovy DSL)"));
+        assertTrue(output.contains("Dependency: org.example:sample:1.0"));
+    }
+
+    @Test
+    void ignoresBuildFilesInGeneratedAndVendorDirectories(@TempDir Path root) throws Exception {
+        for (String directory : List.of("target", "build", ".gradle", "node_modules")) {
+            Path ignored = Files.createDirectories(root.resolve(directory));
+            Files.writeString(ignored.resolve("build.gradle"), "implementation 'org.example:sample:1.0'");
+        }
+
+        String output = new Analyzer().analyze(root).render();
+
+        assertFalse(output.contains("Build system: Gradle"));
+        assertFalse(output.contains("Dependency: org.example:sample:1.0"));
+        assertTrue(output.contains("No supported build descriptor found"));
     }
 }
