@@ -88,6 +88,7 @@ class AnalyzerTest {
     }
 
     @Test
+<<<<<<< HEAD
     void detectsGroovyGradleBuildAndDependencies() throws Exception {
         String output = new Analyzer().analyze(fixture("gradle-groovy")).render();
         assertTrue(output.contains("Detected technologies"));
@@ -137,5 +138,54 @@ class AnalyzerTest {
         assertFalse(output.contains("Build system: Gradle"));
         assertFalse(output.contains("Dependency: org.example:sample:1.0"));
         assertTrue(output.contains("No supported build descriptor found"));
+    }
+
+    @Test
+    void detectsMavenAndTechnologies() throws Exception {
+        Path temp = Files.createTempDirectory("selenium-test");
+
+        Files.writeString(temp.resolve("pom.xml"), """
+            <project>
+                <dependencies>
+                    <dependency>
+                        <groupId>org.seleniumhq.selenium</groupId>
+                        <artifactId>selenium-java</artifactId>
+                        <version>4.20.0</version>
+                    </dependency>
+                    <dependency>
+                        <groupId>org.testng</groupId>
+                        <artifactId>testng</artifactId>
+                        <version>7.10.0</version>
+                    </dependency>
+                    <dependency>
+                        <groupId>org.junit.jupiter</groupId>
+                        <artifactId>junit-jupiter</artifactId>
+                        <version>5.10.2</version>
+                    </dependency>
+                    <dependency>
+                        <groupId>io.github.bonigarcia</groupId>
+                        <artifactId>webdrivermanager</artifactId>
+                        <version>5.8.0</version>
+                    </dependency>
+                </dependencies>
+            </project>
+            """);
+
+        var report = new Analyzer().analyze(temp);
+
+        assertTrue(report.render().contains("Maven"));
+        assertTrue(report.render().contains("Selenium 4.20.0"));
+        assertTrue(report.render().contains("TestNG"));
+        assertTrue(report.render().contains("JUnit 5"));
+        assertTrue(report.render().contains("WebDriverManager"));
+    }
+
+    @Test
+    void missingPomIsNotDetected() throws Exception {
+        Path temp = Files.createTempDirectory("selenium-test");
+
+        var report = new Analyzer().analyze(temp);
+
+        assertTrue(report.render().contains("No supported build descriptor found"));
     }
 }
