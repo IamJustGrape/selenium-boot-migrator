@@ -46,6 +46,7 @@ public final class Analyzer {
             files = s.filter(p -> p.toString().endsWith(".java")).sorted().toList();
         }
         List<Finding> findings = new ArrayList<>();
+        LocatorStats locatorStats = new LocatorStats();
         int parsed = 0;
         List<String> unparsable = new ArrayList<>();
         for (Path f : files) {
@@ -55,23 +56,27 @@ public final class Analyzer {
                 continue;
             }
             parsed++;
-            scan(result.getResult().get(), root.relativize(f).toString(), findings);
+            scan(result.getResult().get(), root.relativize(f).toString(), findings, locatorStats);
         }
-        return new Report(files.size(), parsed, unparsable, findings, BuildFileAnalyzer.detect(root));
+        return new Report(files.size(), parsed, unparsable, findings,
+                BuildFileAnalyzer.detect(root), locatorStats.counts());
     }
 
     /** Analyze a single pasted source string. */
     public Report analyzeSource(String source) {
         var result = parser.parse(source);
         List<Finding> findings = new ArrayList<>();
+        LocatorStats locatorStats = new LocatorStats();
         if (result.getResult().isEmpty() || !result.isSuccessful()) {
             return new Report(1, 0, List.of("<pasted>"), findings);
         }
-        scan(result.getResult().get(), "<pasted>", findings);
-        return new Report(1, 1, List.of(), findings);
+        scan(result.getResult().get(), "<pasted>", findings, locatorStats);
+        return new Report(1, 1, List.of(), findings, List.of(), locatorStats.counts());
     }
 
-    private void scan(CompilationUnit cu, String file, List<Finding> out) {
+    private void scan(CompilationUnit cu, String file, List<Finding> out, LocatorStats locatorStats) {
+        cu.findAll(MethodCallExpr.class).forEach(locatorStats::scan);
+
         // MIG-010: page-object candidates with a WebDriver constructor
         cu.findAll(ClassOrInterfaceDeclaration.class).stream()
             .filter(c -> !c.isInterface())
