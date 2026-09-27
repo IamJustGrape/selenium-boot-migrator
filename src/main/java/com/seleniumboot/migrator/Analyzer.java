@@ -32,36 +32,32 @@ public final class Analyzer {
         try (Stream<Path> s = Files.walk(root)) {
             files = s.filter(p -> p.toString().endsWith(".java")).sorted().toList();
         }
-
         List<Finding> findings = new ArrayList<>();
         int parsed = 0;
         List<String> unparsable = new ArrayList<>();
-
         for (Path f : files) {
             var result = parser.parse(f);
-
             if (result.getResult().isEmpty() || !result.isSuccessful()) {
                 unparsable.add(root.relativize(f).toString());
                 continue;
             }
-
             parsed++;
             scan(result.getResult().get(), root.relativize(f).toString(), findings);
         }
-        return new Report(files.size(), parsed, unparsable, findings, BuildFileAnalyzer.detect(root));
+        List<String> detectedTechnologies = BuildFileAnalyzer.detect(root);
+        return new Report(files.size(), parsed, unparsable, findings, detectedTechnologies,
+                recognizedTechnologies(detectedTechnologies));
     }
 
+    /** Analyze a single pasted source string. */
     public Report analyzeSource(String source) {
         var result = parser.parse(source);
         List<Finding> findings = new ArrayList<>();
-
         if (result.getResult().isEmpty() || !result.isSuccessful()) {
-            return new Report(1, 0, List.of("<pasted>"), findings, "not detected");
+            return new Report(1, 0, List.of("<pasted>"), findings);
         }
-
         scan(result.getResult().get(), "<pasted>", findings);
-
-        return new Report(1, 1, List.of(), findings, "not detected");
+        return new Report(1, 1, List.of(), findings);
     }
 
     private void scan(CompilationUnit cu, String file, List<Finding> out) {
@@ -88,70 +84,57 @@ public final class Analyzer {
         // MIG-001: ThreadLocal<WebDriver> driver factory
         cu.findAll(FieldDeclaration.class).forEach(fd -> {
             String type = fd.getElementType().toString();
-
             if (type.startsWith("ThreadLocal<") && type.contains("WebDriver")) {
                 out.add(new Finding("MIG-001", AUTO, file, line(fd), "ThreadLocal<WebDriver>",
                         "Delete the driver factory; extend BaseTest (per-thread isolation is built in)."));
             }
         });
-
+        // MIG-002: WebDriverManager.*.setup()
         cu.findAll(NameExpr.class).stream()
                 .filter(n -> n.getNameAsString().equals("WebDriverManager"))
                 .forEach(n -> out.add(new Finding("MIG-002", AUTO, file, line(n), "WebDriverManager",
                         "Delete; Selenium Manager fetches drivers automatically.")));
-
+        // MIG-003: WebDriverWait / ExpectedConditions
         cu.findAll(ObjectCreationExpr.class).stream()
                 .filter(o -> o.getType().getNameAsString().equals("WebDriverWait"))
                 .forEach(o -> out.add(new Finding("MIG-003", MANUAL, file, line(o), "new WebDriverWait(...)",
                         "Use $(locator) auto-wait or getWait(); review the condition by hand.")));
-
         cu.findAll(NameExpr.class).stream()
                 .filter(n -> n.getNameAsString().equals("ExpectedConditions"))
                 .forEach(n -> out.add(new Finding("MIG-003", MANUAL, file, line(n), "ExpectedConditions",
                         "Map to $(locator) auto-wait or a WaitEngine call.")));
-
+        // MIG-004: retry analyzer / annotation transformer
         cu.findAll(ClassOrInterfaceDeclaration.class).forEach(c -> {
-
             boolean retry = c.getImplementedTypes().stream()
                     .anyMatch(t -> t.getNameAsString().equals("IRetryAnalyzer")
                             || t.getNameAsString().equals("IAnnotationTransformer"));
-
             if (retry) {
                 out.add(new Finding("MIG-004", AUTO, file, line(c), c.getNameAsString(),
                         "Delete; set retry.enabled in selenium-boot.yml or use @Retryable."));
             }
-
-            boolean listener = c.getImplementedTypes().stream()
-                    .anyMatch(t -> t.getNameAsString().equals("ITestListener"));
-
-            boolean shots = c.findAll(NameExpr.class).stream()
-                    .anyMatch(n -> n.getNameAsString().equals("TakesScreenshot"))
+            // MIG-005: screenshot-on-failure listener
+            boolean listener = c.getImplementedTypes().stream().anyMatch(t -> t.getNameAsString().equals("ITestListener"));
+            boolean shots = c.findAll(NameExpr.class).stream().anyMatch(n -> n.getNameAsString().equals("TakesScreenshot"))
                     || c.toString().contains("TakesScreenshot");
-
             if (listener && shots) {
                 out.add(new Finding("MIG-005", AUTO, file, line(c), c.getNameAsString(),
                         "Delete; failure screenshots are captured automatically."));
             }
         });
-
+        // MIG-014: hard-coded sleeps, MIG-016: implicit waits (flag only)
         cu.findAll(MethodCallExpr.class).forEach(m -> {
-
-            if (m.getNameAsString().equals("sleep")
-                    && m.getScope().map(s -> s.toString().equals("Thread")).orElse(false)) {
-
+            if (m.getNameAsString().equals("sleep") && m.getScope().map(s -> s.toString().equals("Thread")).orElse(false)) {
                 out.add(new Finding("MIG-014", MANUAL, file, line(m), "Thread.sleep(...)",
                         "Replace with an auto-waiting locator or getWait()."));
             }
-
             if (m.getNameAsString().equals("implicitlyWait")) {
                 out.add(new Finding("MIG-016", MANUAL, file, line(m), "implicitlyWait(...)",
                         "Remove; mixing implicit and explicit waits causes flakiness."));
             }
         });
-
+        // MIG-015: custom DriverManager (flag only)
         cu.findAll(ClassOrInterfaceDeclaration.class).stream()
-                .filter(c -> c.getNameAsString().endsWith("DriverManager")
-                        || c.getNameAsString().endsWith("DriverFactory"))
+                .filter(c -> c.getNameAsString().endsWith("DriverManager") || c.getNameAsString().endsWith("DriverFactory"))
                 .forEach(c -> out.add(new Finding("MIG-015", MANUAL, file, line(c), c.getNameAsString(),
                         "Custom driver lifecycle: review, then replace with BaseTest.")));
     }
@@ -171,5 +154,54 @@ public final class Analyzer {
 
     private static boolean isAnnotation(String name, String simpleName) {
         return name.equals(simpleName) || name.endsWith("." + simpleName);
+    }
+
+    private static List<String> recognizedTechnologies(List<String> detectedTechnologies) {
+        boolean testNg = false;
+        boolean junit4 = false;
+        boolean junit5 = false;
+        boolean webDriverManager = false;
+        boolean extentReports = false;
+        boolean allure = false;
+        String seleniumVersion = null;
+
+        for (String detected : detectedTechnologies) {
+            if (!detected.startsWith("Dependency: ")) continue;
+
+            String[] coordinates = detected.substring("Dependency: ".length()).split(":", -1);
+            if (coordinates.length < 2) continue;
+
+            String groupId = coordinates[0];
+            String artifactId = coordinates[1];
+            String version = coordinates.length > 2 ? coordinates[2] : "";
+
+            if (groupId.equals("org.seleniumhq.selenium") && artifactId.equals("selenium-java")) {
+                seleniumVersion = version;
+            } else if (groupId.equals("org.testng") && artifactId.equals("testng")) {
+                testNg = true;
+            } else if (groupId.equals("junit") && artifactId.equals("junit")) {
+                junit4 = true;
+            } else if (groupId.equals("org.junit.jupiter")) {
+                junit5 = true;
+            } else if (groupId.equals("io.github.bonigarcia") && artifactId.equals("webdrivermanager")) {
+                webDriverManager = true;
+            } else if (groupId.equals("com.aventstack") && artifactId.equals("extentreports")) {
+                extentReports = true;
+            } else if (groupId.equals("io.qameta.allure")) {
+                allure = true;
+            }
+        }
+
+        List<String> recognized = new ArrayList<>();
+        if (seleniumVersion != null) {
+            recognized.add(seleniumVersion.isBlank() ? "Selenium" : "Selenium " + seleniumVersion);
+        }
+        if (testNg) recognized.add("TestNG");
+        if (junit4) recognized.add("JUnit 4");
+        if (junit5) recognized.add("JUnit 5");
+        if (webDriverManager) recognized.add("WebDriverManager");
+        if (extentReports) recognized.add("ExtentReports");
+        if (allure) recognized.add("Allure");
+        return List.copyOf(recognized);
     }
 }
