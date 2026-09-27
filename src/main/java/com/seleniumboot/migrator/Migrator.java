@@ -6,6 +6,7 @@ import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.FieldDeclaration;
 import com.github.javaparser.ast.expr.AnnotationExpr;
+import com.github.javaparser.ast.expr.FieldAccessExpr;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
 import com.github.javaparser.ast.stmt.ExpressionStmt;
@@ -38,6 +39,9 @@ import java.util.stream.Stream;
 /** Copies a project and applies only transformations that can be performed mechanically. */
 public final class Migrator {
 
+    private static final String SELENIUM_BOOT_VERSION = "3.5.0";
+    private static final Set<String> EXCLUDED_DIRECTORIES = Set.of(".git", "target", "node_modules");
+
     public record Result(Path output, List<String> applied, List<String> notes, Report remaining) { }
 
     private final JavaParser parser = new JavaParser(
@@ -63,22 +67,23 @@ public final class Migrator {
 
         List<String> applied = new ArrayList<>();
         List<String> notes = new ArrayList<>();
-        transformJava(destination, applied);
+        Set<String> removedTypes = transformJava(destination, applied);
+        List<Finding> danglingReferences = findDanglingReferences(destination, removedTypes);
         if (!migratePom(destination.resolve("pom.xml"))) {
             notes.add("pom.xml: no org.seleniumhq.selenium:selenium-java dependency found to replace.");
         } else {
-            applied.add("pom.xml: replaced org.seleniumhq.selenium:selenium-java with io.github.seleniumboot:selenium-boot");
-            notes.add("pom.xml: retained the existing dependency version; confirm it matches a published selenium-boot release.");
+            applied.add("pom.xml: replaced selenium-java with io.github.seleniumboot:selenium-boot:" + SELENIUM_BOOT_VERSION);
         }
         Report outputAnalysis = new Analyzer().analyze(destination);
         return new Result(destination, List.copyOf(applied), List.copyOf(notes),
-                includeSourceManualFindings(sourceAnalysis, outputAnalysis));
+                includeSourceManualFindings(sourceAnalysis, outputAnalysis, danglingReferences));
     }
 
-    private static Report includeSourceManualFindings(Report source, Report output) {
+    private static Report includeSourceManualFindings(Report source, Report output, List<Finding> additionalFindings) {
         List<Finding> findings = new ArrayList<>(source.findings().stream()
                 .filter(finding -> finding.status() == Finding.Status.MANUAL).toList());
         output.findings().stream().filter(finding -> !findings.contains(finding)).forEach(findings::add);
+        additionalFindings.stream().filter(finding -> !findings.contains(finding)).forEach(findings::add);
         Set<String> unparsable = new LinkedHashSet<>(source.unparsable());
         unparsable.addAll(output.unparsable());
         return new Report(output.filesFound(), output.filesParsed(), List.copyOf(unparsable), List.copyOf(findings));
@@ -88,6 +93,9 @@ public final class Migrator {
         Files.walkFileTree(source, new SimpleFileVisitor<>() {
             @Override
             public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+                if (!dir.equals(source) && EXCLUDED_DIRECTORIES.contains(dir.getFileName().toString())) {
+                    return FileVisitResult.SKIP_SUBTREE;
+                }
                 Files.createDirectories(destination.resolve(source.relativize(dir)));
                 return FileVisitResult.CONTINUE;
             }
@@ -101,17 +109,18 @@ public final class Migrator {
         });
     }
 
-    private void transformJava(Path root, List<String> applied) throws IOException {
+    private Set<String> transformJava(Path root, List<String> applied) throws IOException {
         List<Path> sources;
         try (Stream<Path> files = Files.walk(root)) {
             sources = files.filter(path -> path.toString().endsWith(".java")).sorted().toList();
         }
+        Set<String> removedTypes = new LinkedHashSet<>();
         for (Path file : sources) {
             var parsed = parser.parse(file);
             if (parsed.getResult().isEmpty() || !parsed.isSuccessful()) continue;
             CompilationUnit unit = parsed.getResult().get();
             LexicalPreservingPrinter.setup(unit);
-            boolean changed = removeAutoTypes(unit, applied, root.relativize(file).toString());
+            boolean changed = removeAutoTypes(unit, applied, removedTypes, root.relativize(file).toString());
             changed |= removeWebDriverManagerSetup(unit, applied, root.relativize(file).toString());
             if (changed) changed |= removeUnusedExplicitImports(unit);
             if (changed && unit.getTypes().isEmpty()) {
@@ -120,9 +129,10 @@ public final class Migrator {
                 Files.writeString(file, LexicalPreservingPrinter.print(unit));
             }
         }
+        return removedTypes;
     }
 
-    private static boolean removeAutoTypes(CompilationUnit unit, List<String> applied, String file) {
+    private static boolean removeAutoTypes(CompilationUnit unit, List<String> applied, Set<String> removedTypes, String file) {
         boolean changed = false;
         for (var type : new ArrayList<>(unit.getTypes())) {
             if (!(type instanceof ClassOrInterfaceDeclaration declaration)) continue;
@@ -136,6 +146,9 @@ public final class Migrator {
                     && (declaration.toString().contains("TakesScreenshot")
                     || declaration.toString().contains("getScreenshotAs"));
             if (driverFactory || retry || screenshotListener) {
+                String packageName = unit.getPackageDeclaration()
+                    .map(packageDeclaration -> packageDeclaration.getNameAsString() + ".").orElse("");
+                removedTypes.add(packageName + declaration.getNameAsString());
                 declaration.remove();
                 applied.add(file + ": removed " + declaration.getNameAsString());
                 changed = true;
@@ -143,6 +156,80 @@ public final class Migrator {
         }
         return changed;
     }
+
+    private List<Finding> findDanglingReferences(Path root, Set<String> removedTypes) throws IOException {
+        if (removedTypes.isEmpty()) return List.of();
+        List<Finding> findings = new ArrayList<>();
+        try (Stream<Path> files = Files.walk(root)) {
+            for (Path file : files.filter(path -> path.toString().endsWith(".java")).sorted().toList()) {
+                var parsed = parser.parse(file);
+                if (parsed.getResult().isEmpty() || !parsed.isSuccessful()) continue;
+                CompilationUnit unit = parsed.getResult().get();
+                for (String removedType : removedTypes) {
+                    NodeReference reference = findTypeReference(unit, removedType);
+                    if (reference != null) {
+                        findings.add(new Finding("MIG-017", Finding.Status.MANUAL,
+                                root.relativize(file).toString(), reference.line(), removedType,
+                                "This file still references a class removed during migration; update the caller before compiling."));
+                    }
+                }
+            }
+        }
+        return findings;
+    }
+
+    private static NodeReference findTypeReference(CompilationUnit unit, String targetType) {
+        String simpleName = targetType.substring(targetType.lastIndexOf('.') + 1);
+        String packageName = targetType.contains(".")
+                ? targetType.substring(0, targetType.lastIndexOf('.')) : "";
+        boolean samePackage = unit.getPackageDeclaration()
+                .map(declaration -> declaration.getNameAsString().equals(packageName)).orElse(packageName.isEmpty());
+        boolean imported = unit.getImports().stream().anyMatch(declaration -> {
+            String importedName = declaration.getNameAsString();
+            return (!declaration.isAsterisk() && (importedName.equals(targetType)
+                    || declaration.isStatic() && importedName.startsWith(targetType + ".")))
+                    || declaration.isAsterisk() && (importedName.equals(packageName)
+                    || declaration.isStatic() && importedName.equals(targetType));
+        });
+
+        for (var declaration : unit.getImports()) {
+            String importedName = declaration.getNameAsString();
+            if (importedName.equals(targetType) || declaration.isStatic()
+                    && (importedName.startsWith(targetType + ".")
+                    || declaration.isAsterisk() && importedName.equals(targetType))) {
+                return new NodeReference(declaration.getBegin().map(position -> position.line).orElse(0));
+            }
+        }
+        for (ClassOrInterfaceType type : unit.findAll(ClassOrInterfaceType.class)) {
+            if (matchesTypeReference(type.toString(), targetType, simpleName, samePackage, imported)) {
+                return new NodeReference(type.getBegin().map(position -> position.line).orElse(0));
+            }
+        }
+        for (AnnotationExpr annotation : unit.findAll(AnnotationExpr.class)) {
+            if (matchesTypeReference(annotation.getNameAsString(), targetType, simpleName, samePackage, imported)) {
+                return new NodeReference(annotation.getBegin().map(position -> position.line).orElse(0));
+            }
+        }
+        for (MethodCallExpr call : unit.findAll(MethodCallExpr.class)) {
+            if (call.getScope().map(scope -> matchesTypeReference(scope.toString(), targetType,
+                    simpleName, samePackage, imported)).orElse(false)) {
+                return new NodeReference(call.getBegin().map(position -> position.line).orElse(0));
+            }
+        }
+        for (FieldAccessExpr access : unit.findAll(FieldAccessExpr.class)) {
+            if (matchesTypeReference(access.getScope().toString(), targetType, simpleName, samePackage, imported)) {
+                return new NodeReference(access.getBegin().map(position -> position.line).orElse(0));
+            }
+        }
+        return null;
+    }
+
+    private static boolean matchesTypeReference(String reference, String targetType, String simpleName,
+                                                boolean samePackage, boolean imported) {
+        return reference.equals(targetType) || reference.equals(simpleName) && (samePackage || imported);
+    }
+
+    private record NodeReference(int line) { }
 
     private static boolean removeUnusedExplicitImports(CompilationUnit unit) {
         boolean changed = false;
@@ -204,6 +291,7 @@ public final class Migrator {
                 if (groupId.equals("org.seleniumhq.selenium") && artifactId.equals("selenium-java")) {
                     setChildText(dependency, "groupId", "io.github.seleniumboot");
                     setChildText(dependency, "artifactId", "selenium-boot");
+                    setChildText(dependency, "version", SELENIUM_BOOT_VERSION);
                     changed = true;
                 }
             }
@@ -239,5 +327,8 @@ public final class Migrator {
                 return;
             }
         }
+        Element child = parent.getOwnerDocument().createElement(name);
+        child.setTextContent(value);
+        parent.appendChild(child);
     }
 }

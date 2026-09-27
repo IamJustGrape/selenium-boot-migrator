@@ -73,6 +73,9 @@ class MigratorTest {
                 }
                 class Utility { int value; }
                 """);
+        write(project.resolve(".git/config"), "git metadata");
+        write(project.resolve("target/classes/old.class"), "build output");
+        write(project.resolve("node_modules/package/index.js"), "dependency");
         Map<Path, byte[]> original = snapshot(project);
 
         Migrator.Result result = new Migrator().migrate(project, output);
@@ -82,6 +85,9 @@ class MigratorTest {
         assertFalse(Files.exists(output.resolve("src/main/java/fixture/DriverFactory.java")));
         assertFalse(Files.exists(output.resolve("src/main/java/fixture/RetryAnalyzer.java")));
         assertFalse(Files.exists(output.resolve("src/main/java/fixture/ScreenshotListener.java")));
+        assertFalse(Files.exists(output.resolve(".git")));
+        assertFalse(Files.exists(output.resolve("target")));
+        assertFalse(Files.exists(output.resolve("node_modules")));
         String mixed = Files.readString(output.resolve("src/main/java/fixture/MixedFactory.java"));
         assertFalse(mixed.contains("org.openqa.selenium.WebDriver"));
         assertTrue(mixed.contains("class Utility"));
@@ -91,7 +97,7 @@ class MigratorTest {
         String pom = Files.readString(output.resolve("pom.xml"));
         assertTrue(pom.contains("<groupId>io.github.seleniumboot</groupId>"));
         assertTrue(pom.contains("<artifactId>selenium-boot</artifactId>"));
-        assertTrue(result.notes().stream().anyMatch(note -> note.contains("retained the existing dependency version")));
+        assertTrue(pom.contains("<version>3.5.0</version>"));
         assertTrue(result.remaining().findings().stream().anyMatch(f -> f.ruleId().equals("MIG-014")));
         assertTrue(result.remaining().findings().stream().anyMatch(f -> f.ruleId().equals("MIG-014")
             && f.file().endsWith("DriverFactory.java")));
@@ -110,6 +116,43 @@ class MigratorTest {
             assertEquals(0, compiler.run(null, null, null, compilerArguments.toArray(String[]::new)));
         }
     }
+
+    @Test
+    void reportsReferencesToDeletedRetryAndDriverTypes() throws Exception {
+        Path project = temp.resolve("referencing-project");
+        Path output = temp.resolve("referencing-output");
+        write(project.resolve("pom.xml"), """
+            <project><modelVersion>4.0.0</modelVersion><dependencies>
+              <dependency><groupId>org.seleniumhq.selenium</groupId><artifactId>selenium-java</artifactId></dependency>
+            </dependencies></project>
+            """);
+        write(project.resolve("src/main/java/fixture/DriverFactory.java"), """
+            package fixture;
+            class DriverFactory { ThreadLocal<WebDriver> driver; }
+            """);
+        write(project.resolve("src/main/java/fixture/RetryAnalyzer.java"), """
+            package fixture;
+            class RetryAnalyzer implements IRetryAnalyzer { }
+            """);
+        write(project.resolve("src/main/java/consumer/Caller.java"), """
+            package consumer;
+            import fixture.DriverFactory;
+            import fixture.RetryAnalyzer;
+            class Caller {
+                DriverFactory factory;
+                RetryAnalyzer retry;
+                void configure() { DriverFactory.create(); }
+            }
+            """);
+
+        Migrator.Result result = new Migrator().migrate(project, output);
+
+        assertEquals(2, result.remaining().findings().stream()
+            .filter(finding -> finding.ruleId().equals("MIG-017")
+                && finding.file().endsWith("Caller.java"))
+            .count());
+        assertTrue(Files.readString(output.resolve("pom.xml")).contains("<version>3.5.0</version>"));
+        }
 
     @Test
     void refusesToWriteIntoSourceOrOverwriteExistingOutput() throws Exception {

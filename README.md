@@ -18,8 +18,7 @@ java -jar target/selenium-boot-migrator.jar migrate ./my-selenium-project --out 
 
 The output directory must not already exist and cannot be the source directory or one of its
 children. Migration output lists applied changes, compatibility notes, and any findings still
-requiring manual review. The POM rewrite retains the existing Selenium dependency version; confirm
-that it is valid for the Selenium Boot release you intend to use.
+requiring manual review. The POM rewrite uses the published Selenium Boot `3.5.0` release.
 
 `analyze` reports counts per rule, what maps cleanly vs. needs review, and an *estimated* confidence.
 The estimate is a guide, not a guarantee.
@@ -38,6 +37,7 @@ Each rule follows the [Selenium + TestNG migration guide](https://docs.seleniumb
 | MIG-014 | `Thread.sleep` | Manual review |
 | MIG-015 | Custom `*DriverManager` / `*DriverFactory` | Manual review |
 | MIG-016 | `implicitlyWait` | Remove; manual review |
+| MIG-017 | References to classes removed by migration | Update the caller before compiling |
 
 ## Adding a rule
 
