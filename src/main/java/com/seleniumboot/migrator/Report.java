@@ -4,7 +4,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
-public record Report(int filesFound, int filesParsed, List<String> unparsable, List<Finding> findings) {
+public record Report(int filesFound, int filesParsed, List<String> unparsable, List<Finding> findings,
+                     List<String> detectedTechnologies) {
+
+    public Report(int filesFound, int filesParsed, List<String> unparsable, List<Finding> findings) {
+        this(filesFound, filesParsed, unparsable, findings, List.of());
+    }
 
     public long count(Finding.Status s) {
         return findings.stream().filter(f -> f.status() == s).count();
@@ -22,9 +27,15 @@ public record Report(int filesFound, int filesParsed, List<String> unparsable, L
         StringBuilder sb = new StringBuilder("Selenium Boot Migration Analysis\n\n");
         sb.append(String.format("Files found:              %d%n", filesFound));
         sb.append(String.format("Files parsed:             %d%n", filesParsed));
+        sb.append("\nDetected technologies\n");
+        if (detectedTechnologies.isEmpty()) {
+            sb.append("  No supported build descriptor found\n");
+        } else {
+            detectedTechnologies.forEach(technology -> sb.append("  ").append(technology).append('\n'));
+        }
         Map<String, Long> byRule = new TreeMap<>();
         findings.forEach(f -> byRule.merge(f.ruleId(), 1L, Long::sum));
-        byRule.forEach((r, n) -> sb.append(String.format("%-25s %d%n", r + ":", n)));
+        byRule.forEach((r, n) -> sb.append(String.format("%-40s %d%n", ruleLabel(r) + ":", n)));
         sb.append(String.format("%nMaps cleanly:             %d%n", count(Finding.Status.AUTO)));
         sb.append(String.format("Manual review required:   %d%n", count(Finding.Status.MANUAL)));
         sb.append(String.format("Unparsable files:         %d%n", unparsable.size()));
@@ -37,5 +48,14 @@ public record Report(int filesFound, int filesParsed, List<String> unparsable, L
         }
         unparsable.forEach(u -> sb.append("  [unparsable] ").append(u).append('\n'));
         return sb.toString();
+    }
+
+    private static String ruleLabel(String ruleId) {
+        return switch (ruleId) {
+            case "MIG-010" -> "MIG-010 (Page objects)";
+            case "MIG-011" -> "MIG-011 (@FindBy fields)";
+            case "MIG-012" -> "MIG-012 (PageFactory.initElements calls)";
+            default -> ruleId;
+        };
     }
 }
