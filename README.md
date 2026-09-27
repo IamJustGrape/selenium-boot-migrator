@@ -37,6 +37,7 @@ Each rule follows the [Selenium + TestNG migration guide](https://docs.seleniumb
 | MIG-014 | `Thread.sleep` | Manual review |
 | MIG-015 | Custom `*DriverManager` / `*DriverFactory` | Manual review |
 | MIG-016 | `implicitlyWait` | Remove; manual review |
+| MIG-017 | Driver creation or quit in TestNG/JUnit lifecycle methods | Delete lifecycle glue; extend `BaseTest` |
 
 The Selenium Boot [getting-started guide](https://docs.seleniumboot.com/docs/getting-started) documents page objects extending `BasePage`, with a `WebDriver` constructor and `By` locator fields. It does not document `@FindBy` or `PageFactory.initElements`; the analyzer therefore reports their counts for review rather than treating them as a direct `BasePage` mapping.
 

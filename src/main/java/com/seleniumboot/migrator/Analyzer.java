@@ -9,13 +9,21 @@ import com.github.javaparser.ast.body.FieldDeclaration;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
 import com.github.javaparser.ast.expr.ObjectCreationExpr;
+import com.github.javaparser.ast.expr.AssignExpr;
+import com.github.javaparser.ast.expr.Expression;
+import com.github.javaparser.ast.expr.FieldAccessExpr;
+import com.github.javaparser.ast.expr.ThisExpr;
 import com.github.javaparser.ast.Node;
+import com.github.javaparser.ast.stmt.ExpressionStmt;
+import com.github.javaparser.ast.stmt.Statement;
+import com.github.javaparser.ast.expr.VariableDeclarationExpr;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 
 import static com.seleniumboot.migrator.Finding.Status.AUTO;
@@ -23,6 +31,10 @@ import static com.seleniumboot.migrator.Finding.Status.MANUAL;
 
 /** Read-only static analysis: parses Java sources and reports patterns that map onto Selenium Boot. */
 public final class Analyzer {
+
+    private static final Set<String> DRIVER_LIFECYCLE_ANNOTATIONS = Set.of(
+            "BeforeMethod", "AfterMethod", "BeforeClass", "AfterClass", "BeforeTest", "AfterTest",
+            "BeforeSuite", "AfterSuite", "Before", "After", "BeforeEach", "AfterEach", "BeforeAll", "AfterAll");
 
     private final JavaParser parser = new JavaParser(
             new ParserConfiguration().setLanguageLevel(ParserConfiguration.LanguageLevel.JAVA_17));
@@ -135,6 +147,65 @@ public final class Analyzer {
                 .filter(c -> c.getNameAsString().endsWith("DriverManager") || c.getNameAsString().endsWith("DriverFactory"))
                 .forEach(c -> out.add(new Finding("MIG-015", MANUAL, file, line(c), c.getNameAsString(),
                         "Custom driver lifecycle: review, then replace with BaseTest.")));
+        // MIG-017: driver lifecycle managed in TestNG or JUnit setup/teardown methods
+        cu.findAll(MethodDeclaration.class).stream()
+                .filter(this::isDriverLifecycleMethod)
+            .forEach(method -> {
+                boolean lifecycleOnly = method.getBody().orElseThrow().getStatements().stream()
+                    .allMatch(this::isLifecycleGlueStatement);
+                out.add(new Finding("MIG-017", lifecycleOnly ? AUTO : MANUAL, file, line(method),
+                        "Driver setup/teardown in @" + lifecycleAnnotation(method) + " " + method.getNameAsString() + "()",
+                lifecycleOnly
+                    ? "Delete the lifecycle glue; extend BaseTest. Driver creation, per-thread isolation, and teardown are handled for you."
+                    : "Remove the driver setup; keep the rest."));
+            });
+    }
+
+    private boolean isDriverLifecycleMethod(MethodDeclaration method) {
+        if (lifecycleAnnotation(method) == null || method.getBody().isEmpty()) return false;
+        var body = method.getBody().get();
+        boolean createsDriver = body.findAll(ObjectCreationExpr.class).stream()
+                .anyMatch(creation -> creation.getType().getNameAsString().endsWith("Driver"));
+        boolean quitsDriver = body.findAll(MethodCallExpr.class).stream()
+            .anyMatch(this::isDriverQuit);
+        return createsDriver || quitsDriver;
+    }
+
+        private boolean isLifecycleGlueStatement(Statement statement) {
+        if (!(statement instanceof ExpressionStmt expressionStatement)) return false;
+        Expression expression = expressionStatement.getExpression();
+        if (expression instanceof MethodCallExpr call) return isDriverQuit(call);
+        if (expression instanceof AssignExpr assignment) return isDriverVariable(assignment.getTarget());
+        if (expression instanceof VariableDeclarationExpr declaration) {
+            return declaration.getVariables().stream().allMatch(variable ->
+                variable.getNameAsString().equals("driver")
+                    && variable.getInitializer().filter(ObjectCreationExpr.class::isInstance)
+                        .map(ObjectCreationExpr.class::cast)
+                        .map(creation -> creation.getType().getNameAsString().endsWith("Driver"))
+                        .orElse(false));
+        }
+        return expression instanceof ObjectCreationExpr creation
+            && creation.getType().getNameAsString().endsWith("Driver");
+        }
+
+        private boolean isDriverQuit(MethodCallExpr call) {
+        return call.getNameAsString().equals("quit")
+            && call.getScope().filter(this::isDriverVariable).isPresent();
+        }
+
+        private boolean isDriverVariable(Expression expression) {
+        if (expression instanceof NameExpr name) return name.getNameAsString().equals("driver");
+        return expression instanceof FieldAccessExpr field
+            && field.getNameAsString().equals("driver")
+            && field.getScope() instanceof ThisExpr;
+        }
+
+    private String lifecycleAnnotation(MethodDeclaration method) {
+        return method.getAnnotations().stream()
+                .map(annotation -> annotation.getName().getIdentifier())
+                .filter(DRIVER_LIFECYCLE_ANNOTATIONS::contains)
+                .findFirst()
+                .orElse(null);
     }
 
     private static int line(Node n) {
