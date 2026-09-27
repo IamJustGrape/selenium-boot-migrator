@@ -106,14 +106,11 @@ public final class Analyzer {
                 .forEach(n -> out.add(new Finding("MIG-002", AUTO, file, line(n), "WebDriverManager",
                         "Delete; Selenium Manager fetches drivers automatically.")));
         // MIG-003: WebDriverWait / ExpectedConditions
-        cu.findAll(ObjectCreationExpr.class).stream()
-                .filter(o -> o.getType().getNameAsString().equals("WebDriverWait"))
-                .forEach(o -> out.add(new Finding("MIG-003", MANUAL, file, line(o), "new WebDriverWait(...)",
+        cu.findAll(ExpressionStmt.class).stream()
+                .filter(Analyzer::containsLegacyWait)
+                .forEach(statement -> out.add(new Finding("MIG-003", MANUAL, file, line(statement),
+                        "WebDriverWait / ExpectedConditions",
                         "Use $(locator) auto-wait or getWait(); review the condition by hand.")));
-        cu.findAll(NameExpr.class).stream()
-                .filter(n -> n.getNameAsString().equals("ExpectedConditions"))
-                .forEach(n -> out.add(new Finding("MIG-003", MANUAL, file, line(n), "ExpectedConditions",
-                        "Map to $(locator) auto-wait or a WaitEngine call.")));
         // MIG-004: retry analyzer / annotation transformer
         cu.findAll(ClassOrInterfaceDeclaration.class).forEach(c -> {
             boolean retry = c.getImplementedTypes().stream()
@@ -207,6 +204,14 @@ public final class Analyzer {
                 .filter(DRIVER_LIFECYCLE_ANNOTATIONS::contains)
                 .findFirst()
                 .orElse(null);
+    }
+
+    private static boolean containsLegacyWait(ExpressionStmt statement) {
+        boolean webDriverWait = statement.findAll(ObjectCreationExpr.class).stream()
+                .anyMatch(creation -> creation.getType().getNameAsString().equals("WebDriverWait"));
+        boolean expectedConditions = statement.findAll(NameExpr.class).stream()
+                .anyMatch(name -> name.getNameAsString().equals("ExpectedConditions"));
+        return webDriverWait || expectedConditions;
     }
 
     private static int line(Node n) {

@@ -190,4 +190,76 @@ class AnalyzerTest {
         assertFalse(output.contains("Dependency: org.example:sample:1.0"));
         assertTrue(output.contains("No supported build descriptor found"));
     }
+
+    @Test
+    void allAutoFindingsHaveFullConfidence() {
+        var report = new Analyzer().analyzeSource("""
+                class AutoOnly {
+                    ThreadLocal<WebDriver> driver = new ThreadLocal<>();
+                }
+                """);
+
+        assertEquals(100, report.estimatedConfidence());
+    }
+
+    @Test
+    void allManualFindingsDoNotDropConfidenceToZero() {
+        var report = new Analyzer().analyzeSource("""
+                class Page {
+                    void waitForElement() {
+                        new WebDriverWait(driver, Duration.ofSeconds(5))
+                                .until(ExpectedConditions.visibilityOfElementLocated(By.id("x")));
+                    }
+                }
+                """);
+
+        assertEquals(50, report.estimatedConfidence());
+    }
+
+    @Test
+    void mixedAutoAndManualFilesProduceWeightedConfidence() {
+        var report = new Report(
+                2,
+                2,
+                List.of(),
+                List.of(
+                        new Finding("AUTO", Finding.Status.AUTO, "Auto.java", 1, "", ""),
+                        new Finding("MANUAL", Finding.Status.MANUAL, "Manual.java", 1, "", "")
+                )
+        );
+
+        assertEquals(75, report.estimatedConfidence());
+    }
+
+    @Test
+    void unparsableFilesLowerConfidence() {
+        var report = new Report(
+                2,
+                1,
+                List.of("Broken.java"),
+                List.of(
+                        new Finding("AUTO", Finding.Status.AUTO, "Auto.java", 1, "", "")
+                )
+        );
+
+        assertEquals(50, report.estimatedConfidence());
+    }
+
+    @Test
+    void mig003EmitsOneFindingPerWaitStatement() {
+        var report = new Analyzer().analyzeSource("""
+                class Page {
+                    void waitForElement() {
+                        new WebDriverWait(driver, Duration.ofSeconds(5))
+                                .until(ExpectedConditions.visibilityOfElementLocated(By.id("x")));
+                    }
+                }
+                """);
+
+        assertEquals(1, report.findings().stream()
+                .filter(finding -> finding.ruleId().equals("MIG-003"))
+                .count());
+    }
+
+
 }
