@@ -33,6 +33,58 @@ class AnalyzerTest {
     }
 
     @Test
+    void detectsTestNgDriverLifecycleMethods() throws Exception {
+        var findings = new Analyzer().analyze(fixture("lifecycle-testng")).findings().stream()
+                .filter(finding -> finding.ruleId().equals("MIG-017")).toList();
+        assertEquals(7, findings.size());
+        assertTrue(findings.stream().allMatch(finding -> finding.advice().contains(
+                "Delete the lifecycle glue; extend BaseTest. Driver creation, per-thread isolation, and teardown are handled for you.")));
+    }
+
+    @Test
+    void detectsJunit4DriverLifecycleMethods() throws Exception {
+        var findings = new Analyzer().analyze(fixture("lifecycle-junit4")).findings().stream()
+                .filter(finding -> finding.ruleId().equals("MIG-017")).toList();
+        assertEquals(3, findings.size());
+        assertTrue(findings.stream().allMatch(finding -> finding.advice().contains("extend BaseTest")));
+    }
+
+    @Test
+    void detectsJunit5DriverLifecycleMethods() throws Exception {
+        var findings = new Analyzer().analyze(fixture("lifecycle-junit5")).findings().stream()
+                .filter(finding -> finding.ruleId().equals("MIG-017")).toList();
+        assertEquals(4, findings.size());
+        assertTrue(findings.stream().allMatch(finding -> finding.advice().contains("extend BaseTest")));
+    }
+
+    @Test
+    void ignoresLifecycleMethodsWithoutDriverSetupOrTeardown() {
+        var report = new Analyzer().analyzeSource("class BaseTest { @BeforeEach void setUp() { prepareData(); } }");
+        assertFalse(report.findings().stream().anyMatch(finding -> finding.ruleId().equals("MIG-017")));
+    }
+
+    @Test
+    void mixedLifecycleMethodRequiresManualReview() {
+        var finding = new Analyzer().analyzeSource("""
+                class BaseTest {
+                    @AfterEach void tearDown() {
+                        driver.quit();
+                        logout();
+                    }
+                }
+                """).findings().stream().filter(item -> item.ruleId().equals("MIG-017")).findFirst().orElseThrow();
+
+        assertEquals(Finding.Status.MANUAL, finding.status());
+        assertEquals("Remove the driver setup; keep the rest.", finding.advice());
+    }
+
+    @Test
+    void ignoresQuitOnNonDriverReceiver() {
+        var report = new Analyzer().analyzeSource("class BaseTest { @AfterEach void tearDown() { browser.quit(); } }");
+        assertFalse(report.findings().stream().anyMatch(finding -> finding.ruleId().equals("MIG-017")));
+    }
+
+    @Test
     void detectsWaitsSleepsAndImplicitWait() {
         var r = rules("""
             class P { void m() throws Exception {
