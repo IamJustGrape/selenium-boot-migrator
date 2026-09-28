@@ -15,12 +15,32 @@ public record Report(int filesFound, int filesParsed, List<String> unparsable, L
         return findings.stream().filter(f -> f.status() == s).count();
     }
 
-    /** Share of detected patterns that map cleanly. Estimate only; never a guarantee. */
+    /**
+     * Estimate confidence per affected file instead of per finding.
+     * Auto-only files score 100, files requiring manual review score 50,
+     * and unparsable files score 0. Repeated findings in one file therefore
+     * do not dominate the estimate.
+     */
     public int estimatedConfidence() {
-        long total = findings.size();
-        long penalty = unparsable.size();
-        if (total + penalty == 0) return 100;
-        return (int) Math.round(100.0 * count(Finding.Status.AUTO) / (total + penalty));
+        Map<String, Finding.Status> statusByFile = new TreeMap<>();
+        findings.forEach(finding -> statusByFile.merge(
+                finding.file(),
+                finding.status(),
+                (current, next) -> current == Finding.Status.MANUAL || next == Finding.Status.MANUAL
+                        ? Finding.Status.MANUAL
+                        : Finding.Status.AUTO));
+
+        long affectedFiles = statusByFile.size();
+        long total = affectedFiles + unparsable.size();
+        if (total == 0) return 100;
+
+        long manualFiles = statusByFile.values().stream()
+                .filter(status -> status == Finding.Status.MANUAL)
+                .count();
+        long autoOnlyFiles = affectedFiles - manualFiles;
+
+        double score = autoOnlyFiles * 100.0 + manualFiles * 50.0;
+        return (int) Math.round(score / total);
     }
 
     public String render() {
