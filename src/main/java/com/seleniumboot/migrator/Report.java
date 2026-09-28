@@ -5,10 +5,15 @@ import java.util.Map;
 import java.util.TreeMap;
 
 public record Report(int filesFound, int filesParsed, List<String> unparsable, List<Finding> findings,
-                     List<String> detectedTechnologies) {
+                     List<String> detectedTechnologies, Map<String, Long> locatorCounts) {
 
     public Report(int filesFound, int filesParsed, List<String> unparsable, List<Finding> findings) {
-        this(filesFound, filesParsed, unparsable, findings, List.of());
+        this(filesFound, filesParsed, unparsable, findings, List.of(), Map.of());
+    }
+
+    public Report(int filesFound, int filesParsed, List<String> unparsable, List<Finding> findings,
+                  List<String> detectedTechnologies) {
+        this(filesFound, filesParsed, unparsable, findings, detectedTechnologies, Map.of());
     }
 
     public long count(Finding.Status s) {
@@ -52,6 +57,13 @@ public record Report(int filesFound, int filesParsed, List<String> unparsable, L
             sb.append("  No supported build descriptor found\n");
         } else {
             detectedTechnologies.forEach(technology -> sb.append("  ").append(technology).append('\n'));
+        }
+        sb.append("\nLocator usage:\n");
+        if (locatorCounts.isEmpty()) {
+            sb.append("  None detected\n");
+        } else {
+            locatorCounts.forEach((locator, count) ->
+                    sb.append(String.format("  %-22s %d%n", locator + ":", count)));
         }
         Map<String, Long> byRule = new TreeMap<>();
         findings.forEach(f -> byRule.merge(f.ruleId(), 1L, Long::sum));

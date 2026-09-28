@@ -261,5 +261,56 @@ class AnalyzerTest {
                 .count());
     }
 
+    @Test
+    void countsSeleniumLocatorUsageAndKeepsFullConfidence() {
+        var report = new Analyzer().analyzeSource("""
+                class LocatorPage {
+                    void locate() {
+                        By.id("username");
+                        By.id("password");
+                        By.name("email");
+                        By.className("button");
+                        By.cssSelector(".submit");
+                        By.xpath("//button");
+                        By.linkText("Login");
+                        By.partialLinkText("Log");
+                        By.tagName("input");
+                        org.openqa.selenium.By.xpath("//div");
+                    }
+                }
+                """);
+
+        assertEquals(2L, report.locatorCounts().get("By.id"));
+        assertEquals(1L, report.locatorCounts().get("By.name"));
+        assertEquals(1L, report.locatorCounts().get("By.className"));
+        assertEquals(1L, report.locatorCounts().get("By.cssSelector"));
+        assertEquals(2L, report.locatorCounts().get("By.xpath"));
+        assertEquals(1L, report.locatorCounts().get("By.linkText"));
+        assertEquals(1L, report.locatorCounts().get("By.partialLinkText"));
+        assertEquals(1L, report.locatorCounts().get("By.tagName"));
+
+        assertTrue(report.findings().isEmpty());
+        assertEquals(100, report.estimatedConfidence());
+
+        String output = report.render();
+        assertTrue(output.contains("Locator usage:"));
+        assertTrue(output.contains("By.id:"));
+        assertTrue(output.contains("By.xpath:"));
+    }
+
+    @Test
+    void ignoresNonSeleniumByLikeCalls() {
+        var report = new Analyzer().analyzeSource("""
+                class LocatorPage {
+                    void locate() {
+                        OtherBy.id("username");
+                        locator.xpath("//div");
+                    }
+                }
+                """);
+
+        assertTrue(report.locatorCounts().isEmpty());
+        assertEquals(100, report.estimatedConfidence());
+    }
 
 }
