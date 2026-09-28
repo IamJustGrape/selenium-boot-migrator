@@ -58,8 +58,9 @@ public final class Analyzer {
             parsed++;
             scan(result.getResult().get(), root.relativize(f).toString(), findings, locatorStats);
         }
-        return new Report(files.size(), parsed, unparsable, findings,
-                BuildFileAnalyzer.detect(root), locatorStats.counts());
+        List<String> detectedTechnologies = BuildFileAnalyzer.detect(root);
+        return new Report(files.size(), parsed, unparsable, findings, detectedTechnologies,
+                recognizedTechnologies(detectedTechnologies), locatorStats.counts());
     }
 
     /** Analyze a single pasted source string. */
@@ -71,7 +72,7 @@ public final class Analyzer {
             return new Report(1, 0, List.of("<pasted>"), findings);
         }
         scan(result.getResult().get(), "<pasted>", findings, locatorStats);
-        return new Report(1, 1, List.of(), findings, List.of(), locatorStats.counts());
+        return new Report(1, 1, List.of(), findings, List.of(), List.of(), locatorStats.counts());
     }
 
     private void scan(CompilationUnit cu, String file, List<Finding> out, LocatorStats locatorStats) {
@@ -234,5 +235,54 @@ public final class Analyzer {
 
     private static boolean isAnnotation(String name, String simpleName) {
         return name.equals(simpleName) || name.endsWith("." + simpleName);
+    }
+
+    private static List<String> recognizedTechnologies(List<String> detectedTechnologies) {
+        boolean testNg = false;
+        boolean junit4 = false;
+        boolean junit5 = false;
+        boolean webDriverManager = false;
+        boolean extentReports = false;
+        boolean allure = false;
+        String seleniumVersion = null;
+
+        for (String detected : detectedTechnologies) {
+            if (!detected.startsWith("Dependency: ")) continue;
+
+            String[] coordinates = detected.substring("Dependency: ".length()).split(":", -1);
+            if (coordinates.length < 2) continue;
+
+            String groupId = coordinates[0];
+            String artifactId = coordinates[1];
+            String version = coordinates.length > 2 ? coordinates[2] : "";
+
+            if (groupId.equals("org.seleniumhq.selenium") && artifactId.equals("selenium-java")) {
+                seleniumVersion = version;
+            } else if (groupId.equals("org.testng") && artifactId.equals("testng")) {
+                testNg = true;
+            } else if (groupId.equals("junit") && artifactId.equals("junit")) {
+                junit4 = true;
+            } else if (groupId.equals("org.junit.jupiter")) {
+                junit5 = true;
+            } else if (groupId.equals("io.github.bonigarcia") && artifactId.equals("webdrivermanager")) {
+                webDriverManager = true;
+            } else if (groupId.equals("com.aventstack") && artifactId.equals("extentreports")) {
+                extentReports = true;
+            } else if (groupId.equals("io.qameta.allure")) {
+                allure = true;
+            }
+        }
+
+        List<String> recognized = new ArrayList<>();
+        if (seleniumVersion != null) {
+            recognized.add(seleniumVersion.isBlank() ? "Selenium" : "Selenium " + seleniumVersion);
+        }
+        if (testNg) recognized.add("TestNG");
+        if (junit4) recognized.add("JUnit 4");
+        if (junit5) recognized.add("JUnit 5");
+        if (webDriverManager) recognized.add("WebDriverManager");
+        if (extentReports) recognized.add("ExtentReports");
+        if (allure) recognized.add("Allure");
+        return List.copyOf(recognized);
     }
 }

@@ -5,15 +5,16 @@ import java.util.Map;
 import java.util.TreeMap;
 
 public record Report(int filesFound, int filesParsed, List<String> unparsable, List<Finding> findings,
-                     List<String> detectedTechnologies, Map<String, Long> locatorCounts) {
+                     List<String> detectedTechnologies, List<String> recognizedTechnologies,
+                     Map<String, Long> locatorCounts) {
 
     public Report(int filesFound, int filesParsed, List<String> unparsable, List<Finding> findings) {
-        this(filesFound, filesParsed, unparsable, findings, List.of(), Map.of());
+        this(filesFound, filesParsed, unparsable, findings, List.of(), List.of(), Map.of());
     }
 
     public Report(int filesFound, int filesParsed, List<String> unparsable, List<Finding> findings,
                   List<String> detectedTechnologies) {
-        this(filesFound, filesParsed, unparsable, findings, detectedTechnologies, Map.of());
+        this(filesFound, filesParsed, unparsable, findings, detectedTechnologies, List.of(), Map.of());
     }
 
     public long count(Finding.Status s) {
@@ -57,6 +58,12 @@ public record Report(int filesFound, int filesParsed, List<String> unparsable, L
             sb.append("  No supported build descriptor found\n");
         } else {
             detectedTechnologies.forEach(technology -> sb.append("  ").append(technology).append('\n'));
+        }
+        sb.append("\nRecognized technologies\n");
+        if (recognizedTechnologies.isEmpty()) {
+            sb.append("  No supported test technologies detected\n");
+        } else {
+            sb.append("  ").append(String.join(", ", recognizedTechnologies)).append('\n');
         }
         sb.append("\nLocator usage:\n");
         if (locatorCounts.isEmpty()) {
