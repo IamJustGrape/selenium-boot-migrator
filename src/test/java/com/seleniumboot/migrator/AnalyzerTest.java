@@ -33,6 +33,58 @@ class AnalyzerTest {
     }
 
     @Test
+    void detectsTestNgDriverLifecycleMethods() throws Exception {
+        var findings = new Analyzer().analyze(fixture("lifecycle-testng")).findings().stream()
+                .filter(finding -> finding.ruleId().equals("MIG-017")).toList();
+        assertEquals(7, findings.size());
+        assertTrue(findings.stream().allMatch(finding -> finding.advice().contains(
+                "Delete the lifecycle glue; extend BaseTest. Driver creation, per-thread isolation, and teardown are handled for you.")));
+    }
+
+    @Test
+    void detectsJunit4DriverLifecycleMethods() throws Exception {
+        var findings = new Analyzer().analyze(fixture("lifecycle-junit4")).findings().stream()
+                .filter(finding -> finding.ruleId().equals("MIG-017")).toList();
+        assertEquals(3, findings.size());
+        assertTrue(findings.stream().allMatch(finding -> finding.advice().contains("extend BaseTest")));
+    }
+
+    @Test
+    void detectsJunit5DriverLifecycleMethods() throws Exception {
+        var findings = new Analyzer().analyze(fixture("lifecycle-junit5")).findings().stream()
+                .filter(finding -> finding.ruleId().equals("MIG-017")).toList();
+        assertEquals(4, findings.size());
+        assertTrue(findings.stream().allMatch(finding -> finding.advice().contains("extend BaseTest")));
+    }
+
+    @Test
+    void ignoresLifecycleMethodsWithoutDriverSetupOrTeardown() {
+        var report = new Analyzer().analyzeSource("class BaseTest { @BeforeEach void setUp() { prepareData(); } }");
+        assertFalse(report.findings().stream().anyMatch(finding -> finding.ruleId().equals("MIG-017")));
+    }
+
+    @Test
+    void mixedLifecycleMethodRequiresManualReview() {
+        var finding = new Analyzer().analyzeSource("""
+                class BaseTest {
+                    @AfterEach void tearDown() {
+                        driver.quit();
+                        logout();
+                    }
+                }
+                """).findings().stream().filter(item -> item.ruleId().equals("MIG-017")).findFirst().orElseThrow();
+
+        assertEquals(Finding.Status.MANUAL, finding.status());
+        assertEquals("Remove the driver setup; keep the rest.", finding.advice());
+    }
+
+    @Test
+    void ignoresQuitOnNonDriverReceiver() {
+        var report = new Analyzer().analyzeSource("class BaseTest { @AfterEach void tearDown() { browser.quit(); } }");
+        assertFalse(report.findings().stream().anyMatch(finding -> finding.ruleId().equals("MIG-017")));
+    }
+
+    @Test
     void detectsWaitsSleepsAndImplicitWait() {
         var r = rules("""
             class P { void m() throws Exception {
@@ -259,6 +311,76 @@ class AnalyzerTest {
     }
 
     @Test
+    void allAutoFindingsHaveFullConfidence() {
+        var report = new Analyzer().analyzeSource("""
+                class AutoOnly {
+                    ThreadLocal<WebDriver> driver = new ThreadLocal<>();
+                }
+                """);
+
+        assertEquals(100, report.estimatedConfidence());
+    }
+
+    @Test
+    void allManualFindingsDoNotDropConfidenceToZero() {
+        var report = new Analyzer().analyzeSource("""
+                class Page {
+                    void waitForElement() {
+                        new WebDriverWait(driver, Duration.ofSeconds(5))
+                                .until(ExpectedConditions.visibilityOfElementLocated(By.id("x")));
+                    }
+                }
+                """);
+
+        assertEquals(50, report.estimatedConfidence());
+    }
+
+    @Test
+    void mixedAutoAndManualFilesProduceWeightedConfidence() {
+        var report = new Report(
+                2,
+                2,
+                List.of(),
+                List.of(
+                        new Finding("AUTO", Finding.Status.AUTO, "Auto.java", 1, "", ""),
+                        new Finding("MANUAL", Finding.Status.MANUAL, "Manual.java", 1, "", "")
+                )
+        );
+
+        assertEquals(75, report.estimatedConfidence());
+    }
+
+    @Test
+    void unparsableFilesLowerConfidence() {
+        var report = new Report(
+                2,
+                1,
+                List.of("Broken.java"),
+                List.of(
+                        new Finding("AUTO", Finding.Status.AUTO, "Auto.java", 1, "", "")
+                )
+        );
+
+        assertEquals(50, report.estimatedConfidence());
+    }
+
+    @Test
+    void mig003EmitsOneFindingPerWaitStatement() {
+        var report = new Analyzer().analyzeSource("""
+                class Page {
+                    void waitForElement() {
+                        new WebDriverWait(driver, Duration.ofSeconds(5))
+                                .until(ExpectedConditions.visibilityOfElementLocated(By.id("x")));
+                    }
+                }
+                """);
+
+        assertEquals(1, report.findings().stream()
+                .filter(finding -> finding.ruleId().equals("MIG-003"))
+                .count());
+    }
+
+    @Test
     void rejectsDoctypeInMavenBuildFile(@TempDir Path root) throws Exception {
         Path secret = Files.writeString(root.resolve("external.txt"), "must-not-be-read");
         Files.writeString(root.resolve("pom.xml"), """
@@ -288,4 +410,57 @@ class AnalyzerTest {
 
         assertTrue(report.render().contains("No supported build descriptor found"));
     }
+
+    @Test
+    void countsSeleniumLocatorUsageAndKeepsFullConfidence() {
+        var report = new Analyzer().analyzeSource("""
+                class LocatorPage {
+                    void locate() {
+                        By.id("username");
+                        By.id("password");
+                        By.name("email");
+                        By.className("button");
+                        By.cssSelector(".submit");
+                        By.xpath("//button");
+                        By.linkText("Login");
+                        By.partialLinkText("Log");
+                        By.tagName("input");
+                        org.openqa.selenium.By.xpath("//div");
+                    }
+                }
+                """);
+
+        assertEquals(2L, report.locatorCounts().get("By.id"));
+        assertEquals(1L, report.locatorCounts().get("By.name"));
+        assertEquals(1L, report.locatorCounts().get("By.className"));
+        assertEquals(1L, report.locatorCounts().get("By.cssSelector"));
+        assertEquals(2L, report.locatorCounts().get("By.xpath"));
+        assertEquals(1L, report.locatorCounts().get("By.linkText"));
+        assertEquals(1L, report.locatorCounts().get("By.partialLinkText"));
+        assertEquals(1L, report.locatorCounts().get("By.tagName"));
+
+        assertTrue(report.findings().isEmpty());
+        assertEquals(100, report.estimatedConfidence());
+
+        String output = report.render();
+        assertTrue(output.contains("Locator usage:"));
+        assertTrue(output.contains("By.id:"));
+        assertTrue(output.contains("By.xpath:"));
+    }
+
+    @Test
+    void ignoresNonSeleniumByLikeCalls() {
+        var report = new Analyzer().analyzeSource("""
+                class LocatorPage {
+                    void locate() {
+                        OtherBy.id("username");
+                        locator.xpath("//div");
+                    }
+                }
+                """);
+
+        assertTrue(report.locatorCounts().isEmpty());
+        assertEquals(100, report.estimatedConfidence());
+    }
+
 }
