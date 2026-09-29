@@ -80,6 +80,11 @@ class MigratorTest {
 
         Migrator.Result result = new Migrator().migrate(project, output);
 
+        assertTrue(Files.isRegularFile(output.resolve("MIGRATION_REPORT.md")));
+        String migrationReport = Files.readString(output.resolve("MIGRATION_REPORT.md"));
+        assertTrue(migrationReport.contains("# Selenium Boot Migration Report"));
+        assertTrue(migrationReport.contains("## Rules applied per file"));
+        assertTrue(migrationReport.contains("Estimated migration confidence"));
         assertEquals(original.keySet(), snapshot(project).keySet());
         original.forEach((path, bytes) -> assertArrayEquals(bytes, read(project.resolve(path))));
         assertFalse(Files.exists(output.resolve("src/main/java/fixture/DriverFactory.java")));

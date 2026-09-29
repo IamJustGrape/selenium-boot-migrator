@@ -64,6 +64,7 @@ public final class Migrator {
         Path parent = destination.getParent();
         if (parent != null) Files.createDirectories(parent);
         copyProject(source, destination);
+        MigrationReport.write(destination, sourceAnalysis);
 
         List<String> applied = new ArrayList<>();
         List<String> notes = new ArrayList<>();
